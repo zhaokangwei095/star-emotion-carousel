@@ -5,19 +5,24 @@ A Codex Skill for turning finished Chinese astrology or relationship copy into p
 It handles:
 
 - 2–6 page editorial planning;
+- one measurable focus statement per page, with a shorter kicker and supporting body;
 - six built-in visual styles;
+- optional text-free editorial backgrounds with a fixed upper-left reading zone;
 - deterministic Chinese typography with Pillow;
 - automatic or manual page breaks;
 - overflow and content validation;
 - title, caption, hashtags, alt text, and upload checklist;
 - a publishing package with ordered PNG images.
 
-Chinese text is never delegated to an image model. The renderer measures the installed fonts and places every line itself, which avoids wrong characters, pseudo-text, and inconsistent typography.
+This is not a prompt-only image workflow. The renderer enforces the information
+hierarchy and measures the installed fonts before placing every Chinese line.
+An image model can supply one atmospheric, text-free subject per page; it never
+owns the title, focus statement, body copy, or layout.
 
 ## Published
 
 - SkillHub: [星座情感图文工坊](https://skillhub.cn/skills/indiv-rv/star-emotion-carousel)
-- Version: `1.0.0`
+- Version: `1.1.0`
 
 ## Preview
 
@@ -25,9 +30,11 @@ Chinese text is never delegated to an image model. The renderer measures the ins
 
 ![Six visual styles](docs/style-gallery.png)
 
-### Long-form three-page version
+### Focus-led four-page version with text-free backgrounds
 
-![Three-page blush manuscript preview](docs/blush-preview.png)
+![Four-page focus-led preview](docs/blush-focus-preview.png)
+
+![A full-size content page](docs/focus-page-preview.png)
 
 ## Built-in Styles
 
@@ -39,6 +46,11 @@ Chinese text is never delegated to an image model. The renderer measures the ins
 | `cobalt-grid` | Rankings, lists, and direct opinions | 1080 × 1440 |
 | `ink-noir` | Mature, clear-eyed relationship analysis | 1080 × 1440 |
 | `photo-veil` | A supplied ambient photo or text-free background | 1080 × 1440 |
+
+`photo-veil` is a full-bleed photo treatment. The other presets can also use
+`visual_mode: "editorial-background"` with one still-life background per page;
+the renderer adds a stronger upper-left wash so the generated subject cannot
+compete with the Chinese reading hierarchy.
 
 ## Install
 
@@ -95,13 +107,27 @@ python scripts/render_carousel.py `
   --gallery
 ```
 
+Render with one background per page:
+
+```powershell
+python scripts/render_carousel.py `
+  --input examples/sample_content.json `
+  --out rendered `
+  --background-dir backgrounds
+```
+
 Validate and build a publishing package:
 
 ```powershell
 python scripts/validate_carousel.py `
   --input examples/sample_content.json `
-  --images rendered
+  --images rendered `
+  --backgrounds backgrounds `
+  --strict
 ```
+
+Strict validation checks the focus hierarchy, text-safe visual briefs, and
+the one-background-per-page contract in addition to image dimensions.
 
 ```powershell
 python scripts/package_publish.py `

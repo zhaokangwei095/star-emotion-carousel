@@ -18,6 +18,8 @@ SANS_PATH = r"C:\Windows\Fonts\NotoSansSC-VF.ttf"
 
 NO_LINE_START = set("，。！？；：、）》】」』’”％‰…")
 NO_LINE_END = set("（《【「『‘“")
+FOCUS_LABEL_GAP = 52
+FOCUS_BODY_GAP = 46
 
 
 @dataclass(frozen=True)
@@ -491,12 +493,79 @@ def draw_photo_decoration(
     return image
 
 
+def draw_editorial_background(
+    image: Image.Image,
+    style: Style,
+    background: Image.Image,
+    page_index: int,
+) -> Image.Image:
+    """Use a generated still life as a lower-page visual, not as a text backdrop.
+
+    The top wash is deliberately stronger than the bottom. This preserves the
+    upper-left reading zone while letting the subject remain visible in the
+    lower-right, which is the composition contract required by the skill.
+    """
+    width, height = style.width, style.height
+    image = cover_crop(background.convert("RGB"), (width, height))
+    image = image.filter(ImageFilter.GaussianBlur(1.2)).convert("RGBA")
+
+    wash_color = hex_rgba(style.bg, 255)
+    wash = Image.new("RGBA", (width, height), wash_color)
+
+    gradient = Image.new("L", (1, height))
+    top_alpha = 220
+    bottom_alpha = 64
+    for y in range(height):
+        t = y / max(1, height - 1)
+        eased = t**0.78
+        alpha = round(top_alpha + (bottom_alpha - top_alpha) * eased)
+        gradient.putpixel((0, y), alpha)
+    wash.putalpha(gradient.resize((width, height)))
+    image = Image.alpha_composite(image, wash)
+
+    # The generator is allowed creative freedom, but it is not allowed to
+    # compete with the reading zone. This feathered panel enforces the
+    # upper-left text-safe area after the image has been cropped.
+    reading_mask = Image.new("L", (width, height), 0)
+    ImageDraw.Draw(reading_mask).rounded_rectangle(
+        (-60, -60, int(width * 0.72), int(height * 0.70)),
+        radius=90,
+        fill=255,
+    )
+    reading_mask = reading_mask.filter(ImageFilter.GaussianBlur(58))
+    reading_panel = Image.new("RGBA", (width, height), hex_rgba(style.bg, 255))
+    reading_panel.putalpha(reading_mask.point(lambda value: round(value * 0.44)))
+    image = Image.alpha_composite(image, reading_panel)
+    image = add_grain(image, 3)
+
+    draw = ImageDraw.Draw(image)
+    border = hex_rgba(style.accent, 94)
+    faint = hex_rgba(style.accent, 54)
+    draw.rectangle((22, 22, width - 22, height - 22), outline=border, width=2)
+    draw.line((22, 300, width - 22, 300), fill=faint, width=2)
+
+    # A page-specific accent keeps the still-life set from feeling like a
+    # repeated template while the typography and margins stay fixed.
+    marker_x = width - 132 + (page_index % 3) * 18
+    marker_y = height - 178
+    draw.line((marker_x, marker_y, marker_x + 68, marker_y), fill=hex_rgba(style.accent, 170), width=3)
+    draw.ellipse(
+        (marker_x - 7, marker_y - 7, marker_x + 7, marker_y + 7),
+        fill=hex_rgba(style.accent, 215),
+    )
+    return image
+
+
 def make_base(
     style: Style,
     page_index: int,
     background: Image.Image | None = None,
 ) -> Image.Image:
     image = Image.new("RGBA", (style.width, style.height), hex_rgba(style.bg, 255))
+    if background is not None:
+        if style.decoration == "photo":
+            return draw_photo_decoration(image, style, background)
+        return draw_editorial_background(image, style, background, page_index)
     if style.decoration == "blush":
         return draw_blush_decoration(image, style)
     if style.decoration == "nocturne":
@@ -597,6 +666,145 @@ def draw_body_block(
     return current_y - style.body_line_gap
 
 
+def wrap_text_block(
+    text: str,
+    font: ImageFont.FreeTypeFont,
+    max_width: int,
+    draw: ImageDraw.ImageDraw,
+) -> list[str]:
+    """Wrap explicit lines separately so a focus statement can control its pauses."""
+    lines: list[str] = []
+    for part in str(text).splitlines():
+        part = part.strip()
+        if part:
+            lines.extend(wrap_cjk(part, font, max_width, draw))
+    return lines
+
+
+def prepare_focus(
+    style: Style,
+    text: str,
+    draw: ImageDraw.ImageDraw,
+) -> tuple[ImageFont.FreeTypeFont, list[str]]:
+    max_width = max(320, style.body_width - 30)
+    max_height = max(260, int(style.height * 0.23))
+    size = min(style.title_size, max(54, round(style.body_size * 1.9)))
+    font = load_font(style.title_font_path, size, style.title_weight)
+    lines = wrap_text_block(text, font, max_width, draw)
+    line_gap = max(12, round(size * 0.18))
+
+    while size > 46:
+        height = len(lines) * font.size + max(0, len(lines) - 1) * line_gap
+        if len(lines) <= 4 and height <= max_height:
+            break
+        size -= 4
+        font = load_font(style.title_font_path, size, style.title_weight)
+        lines = wrap_text_block(text, font, max_width, draw)
+        line_gap = max(12, round(size * 0.18))
+
+    return font, lines
+
+
+def focus_block_height(
+    style: Style,
+    text: str,
+    draw: ImageDraw.ImageDraw,
+) -> int:
+    if not text:
+        return 0
+    font, lines = prepare_focus(style, text, draw)
+    line_gap = max(12, round(font.size * 0.18))
+    text_height = len(lines) * font.size + max(0, len(lines) - 1) * line_gap
+    return FOCUS_LABEL_GAP + text_height + FOCUS_BODY_GAP
+
+
+def draw_focus(
+    draw: ImageDraw.ImageDraw,
+    style: Style,
+    page_spec: dict[str, Any],
+    page_index: int,
+    top: int,
+) -> int:
+    text = str(page_spec.get("focus", "")).strip()
+    if not text:
+        return top
+
+    font, lines = prepare_focus(style, text, draw)
+    line_gap = max(12, round(font.size * 0.18))
+    label = str(page_spec.get("kicker", "")).strip() or f"{page_index + 1:02d} / 本页重点"
+    label_font = load_font(SANS_PATH, 20, b"Bold")
+    draw.text(
+        (style.margin_x, top),
+        label,
+        font=label_font,
+        fill=style.accent,
+        anchor="la",
+    )
+
+    text_top = top + FOCUS_LABEL_GAP
+    text_height = len(lines) * font.size + max(0, len(lines) - 1) * line_gap
+    draw.rectangle(
+        (style.margin_x, text_top + 4, style.margin_x + 5, text_top + text_height + 8),
+        fill=hex_rgba(style.accent, 210),
+    )
+
+    current_y = text_top
+    for line in lines:
+        draw.text(
+            (style.margin_x + 28, current_y),
+            line,
+            font=font,
+            fill=style.title_color,
+            anchor="la",
+        )
+        current_y += font.size + line_gap
+
+    return current_y - line_gap + FOCUS_BODY_GAP
+
+
+def prepare_cover_hook(
+    style: Style,
+    text: str,
+    draw: ImageDraw.ImageDraw,
+) -> tuple[ImageFont.FreeTypeFont, list[str], int]:
+    if not text:
+        return load_font(style.body_font_path, style.body_size, style.body_weight), [], 0
+
+    size = min(48, max(34, round(style.body_size * 1.08)))
+    font = load_font(style.title_font_path, size, b"Bold")
+    lines = wrap_text_block(text, font, style.body_width, draw)
+    while len(lines) > 3 and size > 34:
+        size -= 2
+        font = load_font(style.title_font_path, size, b"Bold")
+        lines = wrap_text_block(text, font, style.body_width, draw)
+    line_gap = max(10, round(size * 0.24))
+    text_height = len(lines) * font.size + max(0, len(lines) - 1) * line_gap
+    return font, lines, text_height + style.cover_body_gap
+
+
+def draw_cover_hook(
+    draw: ImageDraw.ImageDraw,
+    style: Style,
+    text: str,
+    top: int,
+) -> int:
+    if not text:
+        return top
+    font, lines, block_height = prepare_cover_hook(style, text, draw)
+    line_gap = max(10, round(font.size * 0.24))
+    current_y = top
+    for line in lines:
+        draw.text(
+            (style.margin_x, current_y),
+            line,
+            font=font,
+            fill=style.body_color,
+            anchor="la",
+        )
+        current_y += font.size + line_gap
+    return top + block_height
+
+
 def draw_eyebrow(
     draw: ImageDraw.ImageDraw,
     style: Style,
@@ -680,14 +888,17 @@ def normalize_content(content: dict[str, Any], style_key: str | None) -> tuple[S
         title_lines = [title]
 
     manual_pages_raw = content.get("pages")
-    manual_pages: list[list[str]] | None = None
+    manual_pages: list[dict[str, Any]] | None = None
     if manual_pages_raw:
         if not isinstance(manual_pages_raw, list):
             raise ValueError("pages must be a list when provided.")
         manual_pages = []
         for page_number, page in enumerate(manual_pages_raw, 1):
             if isinstance(page, dict):
+                page_spec = dict(page)
                 page = page.get("paragraphs", [])
+            else:
+                page_spec = {}
             if isinstance(page, str):
                 page = [page]
             if not isinstance(page, list):
@@ -695,8 +906,12 @@ def normalize_content(content: dict[str, Any], style_key: str | None) -> tuple[S
             clean_page = [str(paragraph).strip() for paragraph in page if str(paragraph).strip()]
             if not clean_page:
                 raise ValueError(f"pages[{page_number}] is empty.")
-            manual_pages.append(clean_page)
-        paragraphs = [paragraph for page in manual_pages for paragraph in page]
+            page_spec["paragraphs"] = clean_page
+            page_spec["focus"] = str(page_spec.get("focus", "")).strip()
+            page_spec["kicker"] = str(page_spec.get("kicker", "")).strip()
+            page_spec["visual_prompt"] = str(page_spec.get("visual_prompt", "")).strip()
+            manual_pages.append(page_spec)
+        paragraphs = [paragraph for page in manual_pages for paragraph in page["paragraphs"]]
     else:
         paragraphs = content.get("paragraphs")
         if paragraphs is None:
@@ -712,6 +927,9 @@ def normalize_content(content: dict[str, Any], style_key: str | None) -> tuple[S
     normalized["title_lines"] = title_lines
     normalized["paragraphs"] = paragraphs
     normalized["manual_pages"] = manual_pages
+    normalized["cover_hook"] = str(content.get("cover_hook", "")).strip()
+    normalized["visual_mode"] = str(content.get("visual_mode", "typographic")).strip()
+    normalized["background_safe_zone"] = str(content.get("background_safe_zone", "")).strip()
     normalized.setdefault("eyebrow", "")
     normalized.setdefault("brand", "")
     normalized.setdefault("image_alt", [])
@@ -726,7 +944,8 @@ def paginate(
     style: Style,
     title_lines: list[str],
     paragraphs: list[str],
-    manual_pages: list[list[str]] | None = None,
+    manual_pages: list[dict[str, Any]] | None = None,
+    cover_hook: str = "",
     strict_manual_pages: bool = False,
 ) -> tuple[list[list[list[str]]], list[list[str]]]:
     probe = Image.new("RGBA", (style.width, style.height), (0, 0, 0, 0))
@@ -740,8 +959,8 @@ def paginate(
         if lines:
             blocks.append(lines)
 
-    title_bottom = style.title_y + title_height(title_font, len(title_lines), style.title_line_gap)
     cover_body_top = max(style.title_y + title_height(title_font, len(title_lines), style.title_line_gap) + style.cover_body_gap, 0)
+    cover_body_top += prepare_cover_hook(style, cover_hook, draw)[2]
     if cover_body_top > style.body_bottom - 120:
         raise ValueError("Title leaves too little cover body space. Shorten title lines or choose another style.")
 
@@ -750,8 +969,11 @@ def paginate(
     if manual_pages:
         rendered_pages: list[list[list[str]]] = []
         overflow_message: str | None = None
-        for page_index, page_paragraphs in enumerate(manual_pages):
+        for page_index, page_spec in enumerate(manual_pages):
+            page_paragraphs = page_spec["paragraphs"]
             start_y = cover_body_top if page_index == 0 else style.page_body_top
+            if page_index > 0:
+                start_y += focus_block_height(style, page_spec.get("focus", ""), draw)
             bottom = style.cover_body_bottom if page_index == 0 else style.body_bottom
             page_blocks: list[list[str]] = []
             current_y = start_y
@@ -843,6 +1065,7 @@ def render(
     style_key: str | None,
     output_dir: Path,
     background_path: Path | None = None,
+    background_dir: Path | None = None,
     max_pages: int | None = None,
 ) -> list[Path]:
     style, content = normalize_content(content, style_key)
@@ -851,18 +1074,48 @@ def render(
         content["title_lines"],
         content["paragraphs"],
         content.get("manual_pages"),
+        content.get("cover_hook", ""),
         bool(content.get("strict_pages", False)),
     )
     if max_pages is not None:
         pages = pages[:max_pages]
 
     output_dir.mkdir(parents=True, exist_ok=True)
+    if background_dir:
+        expected: list[str] = []
+        for page_index in range(len(pages)):
+            found = next(
+                (
+                    background_dir / f"{page_index + 1:02d}{suffix}"
+                    for suffix in (".png", ".jpg", ".jpeg", ".webp")
+                    if (background_dir / f"{page_index + 1:02d}{suffix}").exists()
+                ),
+                None,
+            )
+            if found is None:
+                expected.append(f"{page_index + 1:02d}.png/.jpg")
+        if expected:
+            missing = ", ".join(expected)
+            raise ValueError(
+                "background-dir must contain one text-free image per rendered page. "
+                f"Missing: {missing}"
+            )
+
     background = Image.open(background_path).convert("RGB") if background_path else None
     body_font = load_font(style.body_font_path, style.body_size, style.body_weight)
+    manual_pages = content.get("manual_pages") or []
     paths: list[Path] = []
 
     for page_index, page_blocks in enumerate(pages):
-        image = make_base(style, page_index, background)
+        page_spec = manual_pages[page_index] if page_index < len(manual_pages) else {}
+        page_background = background
+        if background_dir:
+            for suffix in (".png", ".jpg", ".jpeg", ".webp"):
+                candidate = background_dir / f"{page_index + 1:02d}{suffix}"
+                if candidate.exists():
+                    page_background = Image.open(candidate).convert("RGB")
+                    break
+        image = make_base(style, page_index, page_background)
         draw = ImageDraw.Draw(image)
 
         if page_index == 0:
@@ -871,7 +1124,12 @@ def render(
 
         if page_index == 0:
             title_bottom, _ = draw_title(draw, style, title_lines, style.title_y)
-            body_y = title_bottom + style.cover_body_gap
+            body_y = draw_cover_hook(
+                draw,
+                style,
+                content.get("cover_hook", ""),
+                title_bottom + style.cover_body_gap,
+            )
 
             if style.decoration == "cobalt":
                 draw.rectangle(
@@ -890,6 +1148,8 @@ def render(
                     fill=hex_rgba(style.accent, 150),
                     width=2,
                 )
+        elif page_spec.get("focus"):
+            body_y = draw_focus(draw, style, page_spec, page_index, style.page_body_top)
 
         current_y = body_y
         for block_index, lines in enumerate(page_blocks):
@@ -919,19 +1179,26 @@ def render_style_preview(content: dict[str, Any], output_path: Path, background:
     for key, style in STYLES.items():
         style_content = dict(content)
         style_content["style"] = key
+        _, normalized = normalize_content(style_content, key)
         pages, title_lines = paginate(
             style,
-            normalize_content(style_content, key)[1]["title_lines"],
-            normalize_content(style_content, key)[1]["paragraphs"],
-            normalize_content(style_content, key)[1].get("manual_pages"),
-            bool(normalize_content(style_content, key)[1].get("strict_pages", False)),
+            normalized["title_lines"],
+            normalized["paragraphs"],
+            normalized.get("manual_pages"),
+            normalized.get("cover_hook", ""),
+            bool(normalized.get("strict_pages", False)),
         )
         image = make_base(style, 0, Image.open(background).convert("RGB") if background else None)
         draw = ImageDraw.Draw(image)
-        draw_eyebrow(draw, style, style_content.get("eyebrow", ""), 0)
+        draw_eyebrow(draw, style, normalized.get("eyebrow", ""), 0)
         title_bottom, _ = draw_title(draw, style, title_lines, style.title_y)
         body_font = load_font(style.body_font_path, style.body_size, style.body_weight)
-        current_y = title_bottom + style.cover_body_gap
+        current_y = draw_cover_hook(
+            draw,
+            style,
+            normalized.get("cover_hook", ""),
+            title_bottom + style.cover_body_gap,
+        )
         for block_index, block in enumerate(pages[0]):
             if block_index:
                 current_y += style.paragraph_gap
@@ -943,7 +1210,7 @@ def render_style_preview(content: dict[str, Any], output_path: Path, background:
                 current_y,
                 body_font,
             )
-        draw_footer(draw, style, style_content.get("brand", ""), 0, len(pages))
+        draw_footer(draw, style, normalized.get("brand", ""), 0, len(pages))
         sample_pages.append((style.label, image.convert("RGB")))
 
     cell_w = 410
@@ -1005,6 +1272,11 @@ def main() -> None:
     parser.add_argument("--out", type=Path, help="Output directory or gallery image path.")
     parser.add_argument("--style", choices=sorted(STYLES), help="Override the style in the JSON.")
     parser.add_argument("--background", type=Path, help="Optional text-free background image for photo-veil.")
+    parser.add_argument(
+        "--background-dir",
+        type=Path,
+        help="Optional directory of text-free page backgrounds named 01.png, 02.png, ...",
+    )
     parser.add_argument("--list-styles", action="store_true", help="List built-in styles.")
     parser.add_argument("--gallery", action="store_true", help="Render a six-style cover gallery.")
     parser.add_argument("--max-pages", type=int, help="Limit pages for a quick preview.")
@@ -1032,6 +1304,7 @@ def main() -> None:
         args.style,
         args.out,
         background_path=args.background,
+        background_dir=args.background_dir,
         max_pages=args.max_pages,
     )
     for path in paths:

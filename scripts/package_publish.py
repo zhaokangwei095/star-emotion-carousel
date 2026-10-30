@@ -83,6 +83,16 @@ def main() -> None:
         "hashtags": hashtags,
         "images": copied,
         "image_alt": alt_text[: len(copied)],
+        "visual_mode": content.get("visual_mode", "typographic"),
+        "page_plan": [
+            {
+                "page": index + 1,
+                "kicker": page.get("kicker", ""),
+                "focus": page.get("focus", ""),
+                "visual_prompt": page.get("visual_prompt", ""),
+            }
+            for index, page in enumerate(content.get("manual_pages") or [])
+        ],
         "source_content": str(args.input.resolve()),
     }
     (args.out / "manifest.json").write_text(
@@ -105,7 +115,10 @@ def main() -> None:
 ## 必查
 
 - [ ] 首图只承担一个情绪钩子，没有把全文塞进封面。
+- [ ] 除封面外，每页只有一个最大重点句，辅助段落明显更小。
 - [ ] 所有页面字号、边距、颜色和装饰保持一致。
+- [ ] 无文字背景只负责氛围，没有文字、Logo、人脸或可识别隐私信息。
+- [ ] 背景主体位于约定安全区，没有压住重点句或正文。
 - [ ] 没有错字、乱码、伪文字、意外裁切或文字压到装饰线。
 - [ ] 星座内容保留娱乐与自我观察边界，不写成诊断或命运承诺。
 - [ ] 正文、标题和标签在当前平台发布页再核对一次限制。

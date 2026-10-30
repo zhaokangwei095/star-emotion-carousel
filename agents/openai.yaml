@@ -1,4 +1,4 @@
 interface:
   display_name: "星座情感图文工坊"
-  short_description: "把正文拆成多页，套用内置风格生成可发布的小红书图文"
+  short_description: "每页一个重点句，配合无文字背景与代码排版生成可发布的小红书图文"
   default_prompt: "使用 $star-emotion-carousel，把我写好的星座情感正文做成一套可直接发布的小红书图文。"
