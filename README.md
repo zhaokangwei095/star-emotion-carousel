@@ -14,6 +14,11 @@ It handles:
 
 Chinese text is never delegated to an image model. The renderer measures the installed fonts and places every line itself, which avoids wrong characters, pseudo-text, and inconsistent typography.
 
+## Published
+
+- SkillHub: [星座情感图文工坊](https://skillhub.cn/skills/indiv-rv/star-emotion-carousel)
+- Version: `1.0.0`
+
 ## Preview
 
 ### Six built-in styles
