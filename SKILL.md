@@ -4,7 +4,7 @@ description: Convert finished Chinese astrology or relationship copy into publis
 license: MIT
 metadata:
   slug: star-emotion-carousel
-  version: 1.1.0
+  version: 1.1.1
   displayName: 星座情感图文工坊
   summary: 把已完成的星座或情感正文拆成有主次层级的小红书图文：每页一个重点句、可选无文字背景、代码叠加中文，并生成发布包。
   tags: [astrology, xiaohongshu, carousel, chinese, image-generation, publishing]

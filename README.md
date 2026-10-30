@@ -22,7 +22,7 @@ owns the title, focus statement, body copy, or layout.
 ## Published
 
 - SkillHub: [星座情感图文工坊](https://skillhub.cn/skills/indiv-rv/star-emotion-carousel)
-- Version: `1.1.0`
+- Version: `1.1.1`
 
 ## Preview
 
